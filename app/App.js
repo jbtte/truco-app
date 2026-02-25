@@ -290,14 +290,10 @@ export default function App() {
         </View>
       </View>
 
-      {/* Pernas indicator */}
-      <View style={styles.pernaBar}>
-        <Text style={styles.pernaText}>Pernas — T0: {roundsWon[0]}  T1: {roundsWon[1]}</Text>
-      </View>
-
-      {/* Status */}
-      <View style={styles.statusBox}>
-        <Text style={styles.statusText}>{status}</Text>
+      {/* Pernas + Status numa linha só */}
+      <View style={styles.infoBar}>
+        <Text style={styles.pernaText}>P: {roundsWon[0]}×{roundsWon[1]}</Text>
+        <Text style={styles.statusText} numberOfLines={1}>{status}</Text>
       </View>
 
       {/* Table — cards on the table */}
@@ -382,7 +378,7 @@ const LIGHT_GREEN = '#2e7d32';
 const GOLD = '#ffd600';
 const RED = '#d32f2f';
 
-const ANDROID_BOTTOM_PADDING = Platform.OS === 'android' ? 52 : 0;
+const ANDROID_BOTTOM_PADDING = Platform.OS === 'android' ? 80 : 0;
 
 const styles = StyleSheet.create({
   container: {
@@ -438,21 +434,17 @@ const styles = StyleSheet.create({
   toastText: { color: GOLD, fontSize: 22, fontWeight: 'bold', textAlign: 'center' },
   toastSub: { color: '#ccc', fontSize: 14, marginTop: 6, textAlign: 'center' },
 
-  // Perna bar
-  pernaBar: {
+  // Pernas + status bar (combined)
+  infoBar: {
     backgroundColor: '#1a6b1f',
     paddingHorizontal: 12,
-    paddingVertical: 4,
+    paddingVertical: 5,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
   },
-  pernaText: { color: '#ccc', fontSize: 13 },
-
-  // Status
-  statusBox: {
-    paddingVertical: 6,
-    alignItems: 'center',
-  },
-  statusText: { color: GOLD, fontSize: 15, fontWeight: '600' },
+  pernaText: { color: '#aaa', fontSize: 12 },
+  statusText: { color: GOLD, fontSize: 13, fontWeight: '600', flexShrink: 1, textAlign: 'right' },
 
   // Table area
   tableArea: {
@@ -460,6 +452,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 8,
+    paddingVertical: 12,
   },
   tableLabel: { color: '#aaa', fontSize: 12, marginBottom: 8 },
   tableRow: {
