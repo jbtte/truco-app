@@ -379,11 +379,13 @@ const GOLD = '#ffd600';
 const RED = '#d32f2f';
 
 const ANDROID_BOTTOM_PADDING = Platform.OS === 'android' ? 80 : 0;
+const ANDROID_TOP_PADDING = Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : 0;
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: GREEN,
+    paddingTop: ANDROID_TOP_PADDING,
   },
   gameOverText: {
     fontSize: 32,
