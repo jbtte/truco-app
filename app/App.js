@@ -23,6 +23,67 @@ const PING_INTERVAL = 10 * 60 * 1000;
 // ── Seat layout label ──────────────────────────────────────────────────────
 const SEAT_LABELS = ['Você', 'Adversário', 'Bot Aliado', 'Bot Inimigo'];
 
+// ── Card helpers ───────────────────────────────────────────────────────────
+const SUIT_SYMBOL = { PAUS: '♣', ESPADAS: '♠', COPAS: '♥', OUROS: '♦' };
+const SUIT_COLOR  = { PAUS: '#111', ESPADAS: '#111', COPAS: '#cc0000', OUROS: '#cc0000' };
+const MANILHA_NAMES = { '4_PAUS': 'ZAP', '7_COPAS': 'COPAS', 'A_ESPADAS': 'ESPADA', '7_OUROS': 'PICA' };
+const MANILHA_CARDS = new Set(['4_PAUS', '7_COPAS', 'A_ESPADAS', '7_OUROS']);
+
+function parseCard(card) {
+  if (!card) return { rank: '?', suit: 'PAUS', symbol: '♣', color: '#111', isManilha: false, manilhaName: '' };
+  const [rank, ...rest] = card.split('_');
+  const suit = rest.join('_');
+  return {
+    rank,
+    suit,
+    symbol: SUIT_SYMBOL[suit] ?? '?',
+    color: SUIT_COLOR[suit] ?? '#111',
+    isManilha: MANILHA_CARDS.has(card),
+    manilhaName: MANILHA_NAMES[card] ?? '',
+  };
+}
+
+function CardFace({ card, width = 78, height = 100, faceDown = false }) {
+  const { rank, symbol, color, isManilha, manilhaName } = parseCard(card);
+  if (faceDown) {
+    return (
+      <View style={[cardFaceStyles.card, { width, height, backgroundColor: '#1565c0' }]}>
+        <Text style={{ color: '#fff', fontSize: 20 }}>🂠</Text>
+      </View>
+    );
+  }
+  return (
+    <View style={[cardFaceStyles.card, { width, height }, isManilha && cardFaceStyles.manilhaBorder]}>
+      <Text style={[cardFaceStyles.corner, { color }]}>{rank}{symbol}</Text>
+      <Text style={[cardFaceStyles.center, { color }]}>{symbol}</Text>
+      <Text style={[cardFaceStyles.cornerBottom, { color }]}>{rank}{symbol}</Text>
+      {isManilha && <Text style={cardFaceStyles.manilhaTag}>{manilhaName}</Text>}
+    </View>
+  );
+}
+
+const cardFaceStyles = StyleSheet.create({
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.25,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 2 },
+    overflow: 'hidden',
+  },
+  manilhaBorder: { borderWidth: 2, borderColor: '#ffd600' },
+  corner: { position: 'absolute', top: 4, left: 5, fontSize: 11, fontWeight: 'bold' },
+  center: { fontSize: 28, fontWeight: 'bold' },
+  cornerBottom: { position: 'absolute', bottom: 4, right: 5, fontSize: 11, fontWeight: 'bold', transform: [{ rotate: '180deg' }] },
+  manilhaTag: { position: 'absolute', bottom: 3, left: 0, right: 0, textAlign: 'center', fontSize: 8, color: '#ffd600', fontWeight: 'bold', backgroundColor: 'rgba(0,0,0,0.45)' },
+});
+
 export default function App() {
   const [socket, setSocket] = useState(null);
   const [status, setStatus] = useState('Conectando...');
@@ -233,12 +294,9 @@ export default function App() {
     socket?.emit('respond_truco', { action });
   }, [socket]);
 
-  // ── Card display helpers ──────────────────────────────────────────────────
-
-  const formatCard = (card) => card?.replace('_', ' ') ?? '?';
-
-  const isManilha = (card) => {
-    return ['4_PAUS', '7_COPAS', 'A_ESPADAS', '7_OUROS'].includes(card);
+  const formatCard = (card) => {
+    const { rank, symbol } = parseCard(card);
+    return `${rank} ${symbol}`;
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -277,7 +335,7 @@ export default function App() {
         <Text style={styles.scoreBarText}>
           T0: {scores[0]}  |  T1: {scores[1]}
         </Text>
-        <Text style={styles.viraText}>Vira: {formatCard(vira)}</Text>
+        <Text style={styles.viraText}>Vira: {vira ? formatCard(vira) : '?'}</Text>
         <View style={styles.headerBtns}>
           {phase === 'PLAYING' || phase === 'TRUCO_PENDING' ? (
             <TouchableOpacity onPress={onForfeit} style={styles.forfeitBtn}>
@@ -304,9 +362,7 @@ export default function App() {
             <View key={seat} style={styles.tableSlot}>
               <Text style={styles.tableSeatLabel}>{SEAT_LABELS[seat]}</Text>
               {tableCards[seat] ? (
-                <View style={[styles.tableCard, isManilha(tableCards[seat]) && styles.manilhaCard]}>
-                  <Text style={styles.tableCardText}>{formatCard(tableCards[seat])}</Text>
-                </View>
+                <CardFace card={tableCards[seat]} width={72} height={96} />
               ) : (
                 <View style={styles.tableCardEmpty}>
                   <Text style={styles.tableCardEmptyText}>—</Text>
@@ -343,21 +399,23 @@ export default function App() {
       <View style={styles.bottomArea}>
         <Text style={styles.handLabel}>Sua mão</Text>
         <View style={styles.handRow}>
-          {hand.map((card, idx) => (
-            <TouchableOpacity
-              key={`${card}-${idx}`}
-              style={[
-                styles.card,
-                myTurn && phase === 'PLAYING' ? styles.cardActive : styles.cardInactive,
-                isManilha(card) && styles.cardManilha,
-              ]}
-              onPress={() => onCardPress(card)}
-              disabled={!myTurn || phase !== 'PLAYING'}
-            >
-              <Text style={styles.cardText}>{formatCard(card)}</Text>
-              {isManilha(card) && <Text style={styles.manilhaBadge}>★</Text>}
-            </TouchableOpacity>
-          ))}
+          {hand.map((card, idx) => {
+            const active = myTurn && phase === 'PLAYING';
+            return (
+              <TouchableOpacity
+                key={`${card}-${idx}`}
+                style={[active ? styles.cardActive : styles.cardInactive]}
+                onPress={() => onCardPress(card)}
+                disabled={!active}
+              >
+                <CardFace
+                  card={card}
+                  width={IS_SMALL_SCREEN ? 72 : 80}
+                  height={IS_SMALL_SCREEN ? 96 : 106}
+                />
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
         {canCallTruco && (
@@ -462,24 +520,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-around',
     width: '100%',
   },
-  tableSlot: { alignItems: 'center', width: '23%' },
+  tableSlot: { alignItems: 'center', width: 76 },
   tableSeatLabel: { color: '#bbb', fontSize: 10, marginBottom: 4 },
-  tableCard: {
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 6,
-    minWidth: 52,
-    alignItems: 'center',
-    elevation: 3,
-  },
-  manilhaCard: { borderWidth: 2, borderColor: GOLD },
-  tableCardText: { fontSize: 12, fontWeight: 'bold', color: '#222' },
   tableCardEmpty: {
     backgroundColor: 'rgba(255,255,255,0.1)',
     borderRadius: 8,
-    padding: 6,
-    minWidth: 52,
+    width: 72,
+    height: 96,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   tableCardEmptyText: { color: '#666', fontSize: 14 },
 
@@ -522,11 +571,8 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },
   },
-  cardActive: { borderWidth: 2, borderColor: GOLD, transform: [{ translateY: -6 }] },
-  cardInactive: { opacity: 0.75 },
-  cardManilha: { borderWidth: 2, borderColor: GOLD },
-  cardText: { fontSize: 12, fontWeight: 'bold', color: '#222', textAlign: 'center' },
-  manilhaBadge: { fontSize: 11, color: GOLD, marginTop: 2 },
+  cardActive: { transform: [{ translateY: -8 }], opacity: 1 },
+  cardInactive: { opacity: 0.7 },
 
   // Truco call button
   trucoBtn: {

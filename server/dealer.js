@@ -1,14 +1,19 @@
 // server/dealer.js
-const { SUITS, RANKS } = require('../shared/constants');
+const { SUITS, RANKS, EXTRA_MANILHAS } = require('../shared/constants');
 
 function createDeck() {
   const deck = [];
+  // 6 ranks × 4 suits = 24 cards
   for (const s of SUITS) {
     for (const r of RANKS) {
       deck.push(`${r}_${s}`);
     }
   }
-  return deck;
+  // Add the 3 manilhas from removed ranks (A_ESPADAS already included above)
+  for (const m of EXTRA_MANILHAS) {
+    deck.push(m);
+  }
+  return deck; // 27 cards total
 }
 
 function shuffle(deck) {

@@ -1,11 +1,12 @@
 // shared/constants.js
 // CommonJS exports for Node.js server compatibility
 
+// Deck reduzido: remove 4,5,6,7 do baralho geral, mantém só as manilhas desses naipes
+// Cartas base: Q, J, K, A, 2, 3 × 4 naipes = 24
+// Manilhas extras: 4_PAUS (Zap), 7_COPAS, 7_OUROS (A_ESPADAS já está no rank A)
+// Total: 27 cartas
+
 const CARD_STRENGTHS = {
-  '4': 1,
-  '5': 2,
-  '6': 3,
-  '7': 4,
   'Q': 5,
   'J': 6,
   'K': 7,
@@ -21,6 +22,13 @@ const MANILHAS_FIXAS = {
   '7_OUROS': 11,   // Pica-fumo
 };
 
+const MANILHA_NAMES = {
+  '4_PAUS': 'Zap',
+  '7_COPAS': 'Copas',
+  'A_ESPADAS': 'Espadilha',
+  '7_OUROS': 'Pica-fumo',
+};
+
 const GAME_STATES = {
   WAITING: 'WAITING',
   PLAYING: 'PLAYING',
@@ -30,6 +38,8 @@ const GAME_STATES = {
 };
 
 const SUITS = ['OUROS', 'ESPADAS', 'COPAS', 'PAUS'];
-const RANKS = ['4', '5', '6', '7', 'Q', 'J', 'K', 'A', '2', '3'];
+const RANKS = ['Q', 'J', 'K', 'A', '2', '3'];
+// Manilhas dos naipes removidos que precisam ser adicionadas manualmente ao deck
+const EXTRA_MANILHAS = ['4_PAUS', '7_COPAS', '7_OUROS'];
 
-module.exports = { CARD_STRENGTHS, MANILHAS_FIXAS, GAME_STATES, SUITS, RANKS };
+module.exports = { CARD_STRENGTHS, MANILHAS_FIXAS, MANILHA_NAMES, GAME_STATES, SUITS, RANKS, EXTRA_MANILHAS };
