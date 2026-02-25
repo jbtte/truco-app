@@ -29,8 +29,9 @@
     },
     "extra": {
       "eas": {
-        "projectId": "your-eas-project-id"
+        "projectId": "b3e22f19-6c51-4c72-922f-c2583a1648df"
       }
-    }
+    },
+    "owner": "jbtte"
   }
 }
