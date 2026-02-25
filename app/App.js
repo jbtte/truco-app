@@ -1,283 +1,340 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
-  StyleSheet,
-  Text,
-  View,
-  TouchableOpacity,
-  SafeAreaView,
-  StatusBar,
-  Platform,
-  Dimensions,
+  StyleSheet, Text, View, TouchableOpacity, SafeAreaView,
+  StatusBar, Platform, Dimensions, Animated,
 } from 'react-native';
-
-const SCREEN_HEIGHT = Dimensions.get('window').height;
-const IS_SMALL_SCREEN = SCREEN_HEIGHT < 700;
 import io from 'socket.io-client';
 
-const SOCKET_URL =
-  process.env.EXPO_PUBLIC_SERVER_URL || 'http://localhost:3000';
-
-// Keep-alive interval for Render free tier (ms)
+// ── Config ─────────────────────────────────────────────────────────────────
+const SOCKET_URL = process.env.EXPO_PUBLIC_SERVER_URL || 'http://localhost:3000';
 const PING_INTERVAL = 10 * 60 * 1000;
 
-// ── Seat layout label ──────────────────────────────────────────────────────
-const SEAT_LABELS = ['Você', 'Adversário', 'Bot Aliado', 'Bot Inimigo'];
+const { height: SCREEN_H } = Dimensions.get('window');
+const IS_SMALL = SCREEN_H < 700;
+
+const ANDROID_TOP    = Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : 0;
+const ANDROID_BOTTOM = Platform.OS === 'android' ? 80 : 16;
+
+// ── Team colors ────────────────────────────────────────────────────────────
+const TEAM = {
+  0: { color: '#c62828', light: '#ef9a9a', bg: 'rgba(198,40,40,0.18)', name: 'Vermelho' },
+  1: { color: '#1565c0', light: '#90caf9', bg: 'rgba(21,101,192,0.18)', name: 'Azul' },
+};
 
 // ── Card helpers ───────────────────────────────────────────────────────────
-const SUIT_SYMBOL = { PAUS: '♣', ESPADAS: '♠', COPAS: '♥', OUROS: '♦' };
-const SUIT_COLOR  = { PAUS: '#111', ESPADAS: '#111', COPAS: '#cc0000', OUROS: '#cc0000' };
-const MANILHA_NAMES = { '4_PAUS': 'ZAP', '7_COPAS': 'COPAS', 'A_ESPADAS': 'ESPADA', '7_OUROS': 'PICA' };
-const MANILHA_CARDS = new Set(['4_PAUS', '7_COPAS', 'A_ESPADAS', '7_OUROS']);
+const SUIT_SYM   = { PAUS: '♣', ESPADAS: '♠', COPAS: '♥', OUROS: '♦' };
+const SUIT_COLOR = { PAUS: '#111', ESPADAS: '#111', COPAS: '#cc0000', OUROS: '#cc0000' };
+const MANILHA_LABEL = { '4_PAUS': 'ZAP', '7_COPAS': 'COPAS', 'A_ESPADAS': 'ESPADA', '7_OUROS': 'PICA' };
+const MANILHAS = new Set(Object.keys(MANILHA_LABEL));
 
 function parseCard(card) {
-  if (!card) return { rank: '?', suit: 'PAUS', symbol: '♣', color: '#111', isManilha: false, manilhaName: '' };
+  if (!card) return { rank: '?', symbol: '?', color: '#111', isManilha: false, label: '' };
   const [rank, ...rest] = card.split('_');
   const suit = rest.join('_');
   return {
     rank,
-    suit,
-    symbol: SUIT_SYMBOL[suit] ?? '?',
-    color: SUIT_COLOR[suit] ?? '#111',
-    isManilha: MANILHA_CARDS.has(card),
-    manilhaName: MANILHA_NAMES[card] ?? '',
+    symbol:    SUIT_SYM[suit]   ?? '?',
+    color:     SUIT_COLOR[suit] ?? '#111',
+    isManilha: MANILHAS.has(card),
+    label:     MANILHA_LABEL[card] ?? '',
   };
 }
 
-function CardFace({ card, width = 78, height = 100, faceDown = false }) {
-  const { rank, symbol, color, isManilha, manilhaName } = parseCard(card);
-  if (faceDown) {
-    return (
-      <View style={[cardFaceStyles.card, { width, height, backgroundColor: '#1565c0' }]}>
-        <Text style={{ color: '#fff', fontSize: 20 }}>🂠</Text>
-      </View>
-    );
-  }
+function CardFace({ card, width = 62, height = 82 }) {
+  const { rank, symbol, color, isManilha, label } = parseCard(card);
   return (
-    <View style={[cardFaceStyles.card, { width, height }, isManilha && cardFaceStyles.manilhaBorder]}>
-      <Text style={[cardFaceStyles.corner, { color }]}>{rank}{symbol}</Text>
-      <Text style={[cardFaceStyles.center, { color }]}>{symbol}</Text>
-      <Text style={[cardFaceStyles.cornerBottom, { color }]}>{rank}{symbol}</Text>
-      {isManilha && <Text style={cardFaceStyles.manilhaTag}>{manilhaName}</Text>}
+    <View style={[CF.card, { width, height }, isManilha && CF.glow]}>
+      <Text style={[CF.corner, { color }]}>{rank}{'\n'}{symbol}</Text>
+      <Text style={[CF.center, { color }]}>{symbol}</Text>
+      <Text style={[CF.cornerBR, { color }]}>{symbol}{'\n'}{rank}</Text>
+      {isManilha && <Text style={CF.tag}>{label}</Text>}
     </View>
   );
 }
 
-const cardFaceStyles = StyleSheet.create({
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#ccc',
-    justifyContent: 'center',
-    alignItems: 'center',
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOpacity: 0.25,
-    shadowRadius: 3,
-    shadowOffset: { width: 0, height: 2 },
-    overflow: 'hidden',
-  },
-  manilhaBorder: { borderWidth: 2, borderColor: '#ffd600' },
-  corner: { position: 'absolute', top: 4, left: 5, fontSize: 11, fontWeight: 'bold' },
-  center: { fontSize: 28, fontWeight: 'bold' },
-  cornerBottom: { position: 'absolute', bottom: 4, right: 5, fontSize: 11, fontWeight: 'bold', transform: [{ rotate: '180deg' }] },
-  manilhaTag: { position: 'absolute', bottom: 3, left: 0, right: 0, textAlign: 'center', fontSize: 8, color: '#ffd600', fontWeight: 'bold', backgroundColor: 'rgba(0,0,0,0.45)' },
+function EmptySlot({ width = 62, height = 82 }) {
+  return <View style={[CF.empty, { width, height }]} />;
+}
+
+const CF = StyleSheet.create({
+  card:     { backgroundColor: '#fff', borderRadius: 7, borderWidth: 1, borderColor: '#ccc', justifyContent: 'center', alignItems: 'center', overflow: 'hidden', elevation: 3, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 3, shadowOffset: { width: 0, height: 2 } },
+  glow:     { borderWidth: 2, borderColor: '#ffd600' },
+  corner:   { position: 'absolute', top: 3, left: 4, fontSize: 10, fontWeight: 'bold', textAlign: 'center', lineHeight: 13 },
+  center:   { fontSize: IS_SMALL ? 22 : 26, fontWeight: 'bold' },
+  cornerBR: { position: 'absolute', bottom: 3, right: 4, fontSize: 10, fontWeight: 'bold', textAlign: 'center', lineHeight: 13, transform: [{ rotate: '180deg' }] },
+  tag:      { position: 'absolute', bottom: 0, left: 0, right: 0, textAlign: 'center', fontSize: 7, color: '#ffd600', fontWeight: 'bold', backgroundColor: 'rgba(0,0,0,0.55)', paddingVertical: 1 },
+  empty:    { backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 7, borderWidth: 1, borderColor: 'rgba(255,255,255,0.13)' },
 });
 
+// ── Position helpers ───────────────────────────────────────────────────────
+// Seat teams: [0]=T0, [1]=T1, [2]=T0, [3]=T1
+const SEAT_TEAM = [0, 1, 0, 1];
+
+function getPositions(mySeat) {
+  if (mySeat === null) return { south: 0, north: 2, east: 1, west: 3 };
+  const partner   = mySeat <= 1 ? mySeat + 2 : mySeat - 2;
+  const opponents = [0, 1, 2, 3].filter(s => s !== mySeat && s !== partner);
+  return { south: mySeat, north: partner, east: opponents[0], west: opponents[1] };
+}
+
+// ── PlayerSlot ─────────────────────────────────────────────────────────────
+function PlayerSlot({ seatIndex, tableCard, name, isActive, pulseAnim, cardW, cardH, namePos = 'below' }) {
+  const teamId = SEAT_TEAM[seatIndex];
+  const tc     = TEAM[teamId];
+  return (
+    <View style={{ alignItems: 'center' }}>
+      {namePos === 'above' && (
+        <Text style={[S.slotName, { color: tc.light }]} numberOfLines={1}>{name}</Text>
+      )}
+      <View>
+        {tableCard ? <CardFace card={tableCard} width={cardW} height={cardH} /> : <EmptySlot width={cardW} height={cardH} />}
+        {isActive && (
+          <Animated.View style={[S.activeRing, { width: cardW + 8, height: cardH + 8, borderColor: tc.color, opacity: pulseAnim }]} />
+        )}
+      </View>
+      {namePos === 'below' && (
+        <Text style={[S.slotName, { color: tc.light }]} numberOfLines={1}>{name}</Text>
+      )}
+    </View>
+  );
+}
+
+// ── CenterPanel ────────────────────────────────────────────────────────────
+function CenterPanel({ content, onRespond, trucoValue }) {
+  const { type, title, subtitle, team } = content;
+  const tc = team != null ? TEAM[team] : null;
+
+  const panelStyle = [S.centerPanel, tc && { borderColor: tc.color }];
+
+  const titleColor = tc ? tc.light : '#fff';
+
+  if (type === 'truco_respond') {
+    const labels = { 3: 'TRUCO!', 6: 'SEIS!', 9: 'NOVE!', 12: 'DOZE!' };
+    return (
+      <View style={panelStyle}>
+        <Text style={[S.cpTitle, { color: '#ff5252' }]}>{labels[trucoValue] ?? 'TRUCO!'}</Text>
+        <Text style={S.cpSub}>Vale {trucoValue} pts</Text>
+        <View style={S.trucoRow}>
+          <TouchableOpacity style={[S.tBtn, { backgroundColor: '#2e7d32' }]} onPress={() => onRespond('accept')}>
+            <Text style={S.tBtnTxt}>Aceitar</Text>
+          </TouchableOpacity>
+          {trucoValue < 12 && (
+            <TouchableOpacity style={[S.tBtn, { backgroundColor: '#e65100' }]} onPress={() => onRespond('raise')}>
+              <Text style={S.tBtnTxt}>Aumentar</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity style={[S.tBtn, { backgroundColor: '#555' }]} onPress={() => onRespond('fold')}>
+            <Text style={S.tBtnTxt}>Correr</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={panelStyle}>
+      {title  ? <Text style={[S.cpTitle, { color: titleColor }]}>{title}</Text>  : null}
+      {subtitle ? <Text style={S.cpSub}>{subtitle}</Text> : null}
+    </View>
+  );
+}
+
+// ── App ────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [socket, setSocket] = useState(null);
-  const [status, setStatus] = useState('Conectando...');
-  const [phase, setPhase] = useState('WAITING');
-
-  const [mySeat, setMySeat] = useState(null);
-  const [myTeam, setMyTeam] = useState(null);
-  const [myTurn, setMyTurn] = useState(false);
+  const [socket,      setSocket]      = useState(null);
+  const [phase,       setPhase]       = useState('WAITING');
+  const [mySeat,      setMySeat]      = useState(null);
+  const [myTeam,      setMyTeam]      = useState(null);
+  const [myTurn,      setMyTurn]      = useState(false);
   const [currentSeat, setCurrentSeat] = useState(null);
+  const [hand,        setHand]        = useState([]);
+  const [vira,        setVira]        = useState(null);
+  const [scores,      setScores]      = useState([0, 0]);
+  const [roundsWon,   setRoundsWon]   = useState([0, 0]);
+  const [tableCards,  setTableCards]  = useState({});
+  const [seatNames,   setSeatNames]   = useState(['Jogador 1', 'Jogador 2', 'Bot', 'Bot']);
+  const [trucoValue,  setTrucoValue]  = useState(1);
+  const [trucoResp,   setTrucoResp]   = useState(null); // seat index that must respond
+  const [centerContent, setCenterContent] = useState({ type: 'waiting', title: 'Aguardando...', subtitle: '', team: null });
 
-  const [hand, setHand] = useState([]);
-  const [vira, setVira] = useState(null);
-  const [scores, setScores] = useState([0, 0]);
-  const [roundsWon, setRoundsWon] = useState([0, 0]);
+  const mySeatRef  = useRef(null);
+  const myTeamRef  = useRef(null);
+  const namesRef   = useRef(['Jogador 1', 'Jogador 2', 'Bot', 'Bot']);
 
-  // tableCards: { [seatIndex]: card }
-  const [tableCards, setTableCards] = useState({});
-
-  const [trucoState, setTrucoState] = useState({
-    active: false,
-    value: 1,
-    waitingResponse: false,
-    respondingSeat: null,
-    callerTeam: null,
-  });
-
-  const [vencedor, setVencedor] = useState(null);
-  const [toast, setToast] = useState(null); // { message, sub }
-
-  const showToast = useCallback((message, sub = '', duration = 2500) => {
-    setToast({ message, sub });
-    setTimeout(() => setToast(null), duration);
+  // Pulse animation
+  const pulseAnim = useRef(new Animated.Value(0.3)).current;
+  useEffect(() => {
+    const anim = Animated.loop(Animated.sequence([
+      Animated.timing(pulseAnim, { toValue: 1,   duration: 600, useNativeDriver: true }),
+      Animated.timing(pulseAnim, { toValue: 0.3, duration: 600, useNativeDriver: true }),
+    ]));
+    anim.start();
+    return () => anim.stop();
   }, []);
 
-  // ── Socket setup ─────────────────────────────────────────────────────────
+  const positions = useMemo(() => getPositions(mySeat), [mySeat]);
+
+  const displayName = useCallback((seatIdx) => {
+    if (seatIdx === mySeatRef.current) return 'Você';
+    if (seatIdx < 2) return 'Adversário';
+    return namesRef.current[seatIdx] ?? 'Bot';
+  }, []);
+
+  const setCenterTurn = useCallback((cs, seat, names) => {
+    if (cs === seat) {
+      setCenterContent({ type: 'my_turn', title: 'Sua vez!', subtitle: 'Jogue uma carta', team: SEAT_TEAM[seat] });
+    } else {
+      const name = cs < 2 ? 'Adversário' : (names?.[cs] ?? 'Bot');
+      setCenterContent({ type: 'other_turn', title: name, subtitle: 'está jogando...', team: SEAT_TEAM[cs] });
+    }
+  }, []);
+
+  // ── Socket ───────────────────────────────────────────────────────────────
   useEffect(() => {
-    const newSocket = io(SOCKET_URL, { transports: ['websocket'] });
-    setSocket(newSocket);
+    const sock = io(SOCKET_URL, { transports: ['websocket'] });
+    setSocket(sock);
 
-    newSocket.on('connect', () => {
-      setStatus('Conectado. Aguardando mesa...');
+    sock.on('connect', () =>
+      setCenterContent({ type: 'waiting', title: 'Conectado', subtitle: 'Aguardando mesa...', team: null }));
+
+    sock.on('connect_error', () =>
+      setCenterContent({ type: 'error', title: 'Sem conexão', subtitle: 'Verifique o servidor', team: null }));
+
+    sock.on('waiting', ({ position, teamId }) => {
+      setMySeat(position);  mySeatRef.current = position;
+      setMyTeam(teamId);    myTeamRef.current = teamId;
+      setCenterContent({
+        type: 'waiting',
+        title: `Jogador ${position + 1}`,
+        subtitle: `Time ${TEAM[teamId].name}\nAguardando adversário...`,
+        team: teamId,
+      });
     });
 
-    newSocket.on('connect_error', () => {
-      setStatus('Erro de conexão. Verifique o servidor.');
-    });
-
-    newSocket.on('waiting', ({ position, teamId, message }) => {
-      setMySeat(position);
-      setMyTeam(teamId);
-      setStatus(message);
-    });
-
-    newSocket.on('table_full', ({ message }) => {
-      setStatus(message);
-    });
-
-    newSocket.on('game_start', ({ hand: newHand, vira: newVira, myTeam: team, mySeat: seat, myTurn: turn, scores: sc }) => {
-      setHand(newHand);
-      setVira(newVira);
-      setMyTeam(team);
-      setMySeat(seat);
+    sock.on('game_start', ({ hand: h, vira: v, myTeam: team, mySeat: seat, myTurn: turn, currentSeat: cs, scores: sc, seatNames: names }) => {
+      setHand(h);
+      setVira(v);
+      setMyTeam(team);      myTeamRef.current = team;
+      setMySeat(seat);      mySeatRef.current = seat;
       setMyTurn(turn);
+      setCurrentSeat(cs);
       setScores(sc);
+      setSeatNames(names ?? ['Jogador 1', 'Jogador 2', 'Bot', 'Bot']);
+      namesRef.current = names ?? ['Jogador 1', 'Jogador 2', 'Bot', 'Bot'];
       setPhase('PLAYING');
       setTableCards({});
       setRoundsWon([0, 0]);
-      setVencedor(null);
-      setTrucoState({ active: false, value: 1, waitingResponse: false, respondingSeat: null, callerTeam: null });
-      setStatus(turn ? 'Sua vez!' : 'Aguarde...');
-      setCurrentSeat(turn ? seat : null);
+      setTrucoValue(1);
+      setTrucoResp(null);
+      setCenterTurn(cs, seat, names);
     });
 
-    newSocket.on('turn_change', ({ currentSeat: cs }) => {
+    sock.on('turn_change', ({ currentSeat: cs }) => {
       setCurrentSeat(cs);
-      // myTurn is determined by comparing cs with mySeat
-      // We use a ref-like approach via functional setState
-      setMySeat(prev => {
-        setMyTurn(cs === prev);
-        setStatus(cs === prev ? 'Sua vez!' : 'Aguarde...');
-        return prev;
-      });
+      setMyTurn(cs === mySeatRef.current);
+      setCenterTurn(cs, mySeatRef.current, namesRef.current);
     });
 
-    newSocket.on('card_played', ({ seatIndex, card }) => {
+    sock.on('card_played', ({ seatIndex, card }) => {
       setTableCards(prev => ({ ...prev, [seatIndex]: card }));
     });
 
-    newSocket.on('round_end', ({ roundsWon: rw, scores: sc, result }) => {
+    sock.on('round_end', ({ roundNumber, result, winnerSeat, winnerName, roundsWon: rw }) => {
       setRoundsWon(rw);
-      setScores(sc);
-      if (result?.isDraw) {
-        showToast('Perna empatada!', 'Ninguém pontuou');
-      } else if (result?.winnerTeam !== undefined) {
-        // will compare with myTeam via state ref workaround below
-        setMyTeam(prev => {
-          const msg = result.winnerTeam === prev ? 'Você ganhou a perna!' : 'Inimigo ganhou a perna!';
-          showToast(msg, `Pernas: T0 ${rw[0]} × T1 ${rw[1]}`);
-          return prev;
+      setMyTurn(false);
+      if (result.isDraw) {
+        setCenterContent({ type: 'round_result', title: `Perna ${roundNumber}`, subtitle: 'Empate!', team: null });
+      } else {
+        const isMyTeam = SEAT_TEAM[winnerSeat] === myTeamRef.current;
+        setCenterContent({
+          type: 'round_result',
+          title: isMyTeam ? '✓ Perna sua!' : '✗ Perna deles',
+          subtitle: `${winnerName ?? 'Alguém'} ganhou`,
+          team: SEAT_TEAM[winnerSeat],
         });
       }
     });
 
-    newSocket.on('next_round', ({ currentSeat: cs }) => {
+    sock.on('next_round', ({ currentSeat: cs, roundNumber }) => {
       setTableCards({});
       setCurrentSeat(cs);
-      setMySeat(prev => {
-        setMyTurn(cs === prev);
-        setStatus(cs === prev ? 'Sua vez!' : 'Aguarde...');
-        return prev;
-      });
+      setMyTurn(cs === mySeatRef.current);
+      setTrucoResp(null);
+      setPhase('PLAYING');
+      setCenterTurn(cs, mySeatRef.current, namesRef.current);
     });
 
-    newSocket.on('hand_end', ({ winnerTeam, isDraw, points, scores: sc, foldedByTeam }) => {
+    sock.on('hand_end', ({ winnerTeam, isDraw, points, scores: sc, winnerName, foldedByTeam }) => {
       setScores(sc);
       setPhase('HAND_END');
+      setTableCards({});
       if (isDraw) {
-        showToast('Mão empatada!', 'Cada time recebe 0.5pt', 3000);
-        setStatus('Empate!');
+        setCenterContent({ type: 'hand_result', title: 'Mão empatada', subtitle: '+0.5pt cada time', team: null });
       } else {
-        setMyTeam(prev => {
-          const venceu = winnerTeam === prev;
-          const razao = foldedByTeam !== undefined
-            ? (foldedByTeam === prev ? 'Você correu!' : 'Inimigo correu!')
-            : '';
-          showToast(
-            venceu ? `Sua equipe ganhou a mão! +${points}pt` : `Inimigo ganhou a mão! +${points}pt`,
-            razao || `Placar: ${sc[0]} × ${sc[1]}`,
-            3000,
-          );
-          setStatus(venceu ? `+${points}pt para o seu time!` : `+${points}pt para o inimigo.`);
-          return prev;
+        const isMyTeam = winnerTeam === myTeamRef.current;
+        const reason   = foldedByTeam !== undefined ? (foldedByTeam === myTeamRef.current ? 'Você correu' : 'Inimigo correu') : '';
+        setCenterContent({
+          type: 'hand_result',
+          title: isMyTeam ? `+${points}pt para seu time!` : `+${points}pt para o inimigo`,
+          subtitle: reason || `Placar: ${sc[0]} × ${sc[1]}`,
+          team: winnerTeam,
         });
       }
     });
 
-    newSocket.on('game_over', ({ winnerTeam, scores: sc }) => {
+    sock.on('game_over', ({ winnerTeam, scores: sc }) => {
       setScores(sc);
       setPhase('GAME_OVER');
-      setMyTeam(prev => {
-        setVencedor(winnerTeam === prev ? 'Você venceu o jogo!' : 'Você perdeu o jogo!');
-        return prev;
+      const isMyTeam = winnerTeam === myTeamRef.current;
+      setCenterContent({
+        type: 'game_over',
+        title: isMyTeam ? '🏆 Seu time venceu!' : 'Seu time perdeu',
+        subtitle: `Placar final: ${sc[0]} × ${sc[1]}`,
+        team: winnerTeam,
       });
     });
 
-    newSocket.on('truco_called', ({ callerTeam, newValue, respondingSeat: rs }) => {
-      setTrucoState({
-        active: true,
-        value: newValue,
-        waitingResponse: true,
-        respondingSeat: rs,
-        callerTeam,
-      });
+    sock.on('truco_called', ({ callerTeam, callerName, newValue, respondingSeat: rs }) => {
+      setTrucoValue(newValue);
+      setTrucoResp(rs);
       setPhase('TRUCO_PENDING');
-      const labels = { 3: 'Truco!', 6: 'Seis!', 9: 'Nove!', 12: 'Doze!' };
-      setStatus(`${labels[newValue] ?? 'Truco!'} — vale ${newValue} pontos`);
-    });
-
-    newSocket.on('truco_response', ({ action, value }) => {
-      setTrucoState(prev => ({ ...prev, waitingResponse: false, active: action !== 'fold' }));
-      if (action === 'fold') {
-        setStatus('Adversário correu!');
-      } else if (action === 'accept') {
-        setPhase('PLAYING');
-        setStatus(`Truco aceito! Vale ${value} pontos.`);
-      } else if (action === 'raise') {
-        setStatus(`Adversário aumentou para ${value}!`);
+      if (rs === mySeatRef.current) {
+        setCenterContent({ type: 'truco_respond', title: '', subtitle: '', team: callerTeam === 0 ? 1 : 0 });
+      } else {
+        const labels = { 3: 'TRUCO!', 6: 'SEIS!', 9: 'NOVE!', 12: 'DOZE!' };
+        setCenterContent({
+          type: 'truco_wait',
+          title: labels[newValue] ?? 'TRUCO!',
+          subtitle: `${callerName} pediu — ${newValue}pts`,
+          team: callerTeam,
+        });
       }
     });
 
-    newSocket.on('opponent_disconnected', ({ message }) => {
-      setStatus(message);
-      setPhase('WAITING');
+    sock.on('truco_response', ({ action, value }) => {
+      if (action === 'accept') {
+        setPhase('PLAYING');
+        setCenterContent({ type: 'other_turn', title: 'Truco aceito!', subtitle: `Vale ${value}pts`, team: null });
+      } else if (action === 'fold') {
+        setCenterContent({ type: 'other_turn', title: 'Correu!', subtitle: '', team: null });
+      }
     });
 
-    // Keep-alive ping
-    const pingTimer = setInterval(() => {
-      newSocket.emit('ping');
-    }, PING_INTERVAL);
+    sock.on('opponent_disconnected', ({ message }) => {
+      setPhase('WAITING');
+      setCenterContent({ type: 'waiting', title: 'Desconectado', subtitle: message, team: null });
+    });
 
-    return () => {
-      clearInterval(pingTimer);
-      newSocket.close();
-    };
+    const ping = setInterval(() => sock.emit('ping'), PING_INTERVAL);
+    return () => { clearInterval(ping); sock.close(); };
   }, []);
 
   // ── Actions ───────────────────────────────────────────────────────────────
-
   const onCardPress = useCallback((card) => {
     if (!myTurn || phase !== 'PLAYING') return;
     socket?.emit('play_card', { card });
     setHand(prev => prev.filter(c => c !== card));
     setMyTurn(false);
-    setStatus('Aguarde...');
   }, [myTurn, phase, socket]);
 
   const onCallTruco = useCallback(() => {
@@ -285,143 +342,144 @@ export default function App() {
     socket?.emit('call_truco');
   }, [phase, socket]);
 
+  const onRespondTruco = useCallback((action) => {
+    socket?.emit('respond_truco', { action });
+  }, [socket]);
+
   const onForfeit = useCallback(() => {
     socket?.emit('forfeit');
     socket?.disconnect();
   }, [socket]);
 
-  const onRespondTruco = useCallback((action) => {
-    socket?.emit('respond_truco', { action });
-  }, [socket]);
+  // ── Derived card sizes ───────────────────────────────────────────────────
+  const sideW  = IS_SMALL ? 48 : 54;
+  const sideH  = IS_SMALL ? 63 : 71;
+  const mainW  = IS_SMALL ? 58 : 64;
+  const mainH  = IS_SMALL ? 76 : 84;
+  const handW  = IS_SMALL ? 70 : 78;
+  const handH  = IS_SMALL ? 92 : 102;
 
-  const formatCard = (card) => {
-    const { rank, symbol } = parseCard(card);
-    return `${rank} ${symbol}`;
-  };
+  const canCallTruco = (phase === 'PLAYING' || phase === 'TRUCO_PENDING') && trucoValue < 12 && myTurn;
+
+  const { north, south, east, west } = positions;
 
   // ── Render ────────────────────────────────────────────────────────────────
-
-  if (vencedor) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <Text style={styles.gameOverText}>{vencedor}</Text>
-        <Text style={styles.scoreText}>Placar final: {scores[0]} × {scores[1]}</Text>
-      </SafeAreaView>
-    );
-  }
-
-  const amIResponding = trucoState.waitingResponse && trucoState.respondingSeat === mySeat;
-  const canCallTruco = phase === 'PLAYING' && trucoState.value < 12;
-
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Toast overlay */}
-      {toast && (
-        <View style={styles.toastOverlay} pointerEvents="none">
-          <View style={styles.toastBox}>
-            <Text style={styles.toastText}>{toast.message}</Text>
-            {toast.sub ? <Text style={styles.toastSub}>{toast.sub}</Text> : null}
-          </View>
-        </View>
-      )}
-      <StatusBar
-        barStyle="light-content"
-        backgroundColor={DARK_GREEN}
-        translucent={false}
-      />
+    <SafeAreaView style={[S.root, { paddingTop: ANDROID_TOP }]}>
+      <StatusBar barStyle="light-content" backgroundColor="#145214" translucent={false} />
 
-      {/* Score bar */}
-      <View style={styles.scoreBar}>
-        <Text style={styles.scoreBarText}>
-          T0: {scores[0]}  |  T1: {scores[1]}
+      {/* ── Score bar ─────────────────────────────────────────────── */}
+      <View style={S.scoreBar}>
+        <Text style={[S.scoreTeam, { color: TEAM[0].light }]}>
+          Verm: {scores[0]}
         </Text>
-        <Text style={styles.viraText}>Vira: {vira ? formatCard(vira) : '?'}</Text>
-        <View style={styles.headerBtns}>
-          {phase === 'PLAYING' || phase === 'TRUCO_PENDING' ? (
-            <TouchableOpacity onPress={onForfeit} style={styles.forfeitBtn}>
-              <Text style={styles.exitBtnText}>Desistir</Text>
+        <Text style={S.viraText}>Vira: {vira ? (() => { const { rank, symbol } = parseCard(vira); return `${rank}${symbol}`; })() : '?'}</Text>
+        <Text style={[S.scoreTeam, { color: TEAM[1].light }]}>
+          Azul: {scores[1]}
+        </Text>
+        <View style={S.headerBtns}>
+          {(phase === 'PLAYING' || phase === 'TRUCO_PENDING') && (
+            <TouchableOpacity style={S.forfeitBtn} onPress={onForfeit}>
+              <Text style={S.btnTxt}>Desistir</Text>
             </TouchableOpacity>
-          ) : null}
-          <TouchableOpacity onPress={() => socket?.disconnect()} style={styles.exitBtn}>
-            <Text style={styles.exitBtnText}>Sair</Text>
+          )}
+          <TouchableOpacity style={S.exitBtn} onPress={() => socket?.disconnect()}>
+            <Text style={S.btnTxt}>Sair</Text>
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* Pernas + Status numa linha só */}
-      <View style={styles.infoBar}>
-        <Text style={styles.pernaText}>P: {roundsWon[0]}×{roundsWon[1]}</Text>
-        <Text style={styles.statusText} numberOfLines={1}>{status}</Text>
-      </View>
+      {/* ── Table ─────────────────────────────────────────────────── */}
+      <View style={S.table}>
 
-      {/* Table — cards on the table */}
-      <View style={styles.tableArea}>
-        <Text style={styles.tableLabel}>Mesa</Text>
-        <View style={styles.tableRow}>
-          {[0, 1, 2, 3].map(seat => (
-            <View key={seat} style={styles.tableSlot}>
-              <Text style={styles.tableSeatLabel}>{SEAT_LABELS[seat]}</Text>
-              {tableCards[seat] ? (
-                <CardFace card={tableCards[seat]} width={72} height={96} />
-              ) : (
-                <View style={styles.tableCardEmpty}>
-                  <Text style={styles.tableCardEmptyText}>—</Text>
-                </View>
-              )}
-            </View>
-          ))}
+        {/* North (partner) */}
+        <View style={S.northSlot}>
+          <PlayerSlot
+            seatIndex={north}
+            tableCard={tableCards[north]}
+            name={displayName(north)}
+            isActive={currentSeat === north}
+            pulseAnim={pulseAnim}
+            cardW={mainW} cardH={mainH}
+            namePos="above"
+          />
         </View>
-      </View>
 
-      {/* Truco response buttons */}
-      {amIResponding && (
-        <View style={styles.trucoResponse}>
-          <Text style={styles.trucoCallText}>
-            Truco! Vale {trucoState.value} pts
-          </Text>
-          <View style={styles.trucoButtons}>
-            <TouchableOpacity style={styles.btnAccept} onPress={() => onRespondTruco('accept')}>
-              <Text style={styles.btnText}>Aceitar</Text>
-            </TouchableOpacity>
-            {trucoState.value < 12 && (
-              <TouchableOpacity style={styles.btnRaise} onPress={() => onRespondTruco('raise')}>
-                <Text style={styles.btnText}>Aumentar</Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity style={styles.btnFold} onPress={() => onRespondTruco('fold')}>
-              <Text style={styles.btnText}>Correr</Text>
-            </TouchableOpacity>
+        {/* Middle row */}
+        <View style={S.middleRow}>
+
+          {/* West */}
+          <View style={S.sideSlot}>
+            <PlayerSlot
+              seatIndex={west}
+              tableCard={tableCards[west]}
+              name={displayName(west)}
+              isActive={currentSeat === west}
+              pulseAnim={pulseAnim}
+              cardW={sideW} cardH={sideH}
+              namePos="below"
+            />
+          </View>
+
+          {/* Center panel */}
+          <CenterPanel
+            content={centerContent}
+            onRespond={onRespondTruco}
+            trucoValue={trucoValue}
+          />
+
+          {/* East */}
+          <View style={S.sideSlot}>
+            <PlayerSlot
+              seatIndex={east}
+              tableCard={tableCards[east]}
+              name={displayName(east)}
+              isActive={currentSeat === east}
+              pulseAnim={pulseAnim}
+              cardW={sideW} cardH={sideH}
+              namePos="below"
+            />
           </View>
         </View>
-      )}
 
-      {/* Player hand + Truco button — wrapped with Android bottom padding */}
-      <View style={styles.bottomArea}>
-        <Text style={styles.handLabel}>Sua mão</Text>
-        <View style={styles.handRow}>
+        {/* South (me — just played card) */}
+        <View style={S.southSlot}>
+          <PlayerSlot
+            seatIndex={south}
+            tableCard={tableCards[south]}
+            name="Você"
+            isActive={currentSeat === south}
+            pulseAnim={pulseAnim}
+            cardW={mainW} cardH={mainH}
+            namePos="below"
+          />
+        </View>
+
+      </View>
+
+      {/* ── Hand ──────────────────────────────────────────────────── */}
+      <View style={[S.bottomArea, { paddingBottom: ANDROID_BOTTOM }]}>
+        <Text style={S.handLabel}>Sua mão • Perna {roundsWon[0] + roundsWon[1] + 1}</Text>
+        <View style={S.handRow}>
           {hand.map((card, idx) => {
             const active = myTurn && phase === 'PLAYING';
             return (
               <TouchableOpacity
                 key={`${card}-${idx}`}
-                style={[active ? styles.cardActive : styles.cardInactive]}
+                style={active ? S.cardActive : S.cardInactive}
                 onPress={() => onCardPress(card)}
                 disabled={!active}
               >
-                <CardFace
-                  card={card}
-                  width={IS_SMALL_SCREEN ? 72 : 80}
-                  height={IS_SMALL_SCREEN ? 96 : 106}
-                />
+                <CardFace card={card} width={handW} height={handH} />
               </TouchableOpacity>
             );
           })}
         </View>
 
         {canCallTruco && (
-          <TouchableOpacity style={styles.trucoBtn} onPress={onCallTruco}>
-            <Text style={styles.trucoBtnText}>
-              {trucoState.value === 1 ? 'TRUCO!' : trucoState.value === 3 ? 'SEIS!' : trucoState.value === 6 ? 'NOVE!' : 'DOZE!'}
+          <TouchableOpacity style={S.trucoBtn} onPress={onCallTruco}>
+            <Text style={S.trucoBtnTxt}>
+              {trucoValue === 1 ? 'TRUCO!' : trucoValue === 3 ? 'SEIS!' : trucoValue === 6 ? 'NOVE!' : 'DOZE!'}
             </Text>
           </TouchableOpacity>
         )}
@@ -430,158 +488,56 @@ export default function App() {
   );
 }
 
-const GREEN = '#1b5e20';
+// ── Styles ─────────────────────────────────────────────────────────────────
+const GREEN      = '#1b5e20';
 const DARK_GREEN = '#145214';
-const LIGHT_GREEN = '#2e7d32';
-const GOLD = '#ffd600';
-const RED = '#d32f2f';
+const GOLD       = '#ffd600';
+const RED        = '#c62828';
 
-const ANDROID_BOTTOM_PADDING = Platform.OS === 'android' ? 80 : 0;
-const ANDROID_TOP_PADDING = Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : 0;
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: GREEN,
-    paddingTop: ANDROID_TOP_PADDING,
-  },
-  gameOverText: {
-    fontSize: 32,
-    color: GOLD,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginTop: 80,
-  },
-  scoreText: {
-    fontSize: 20,
-    color: '#fff',
-    textAlign: 'center',
-    marginTop: 16,
-  },
+const S = StyleSheet.create({
+  root:    { flex: 1, backgroundColor: GREEN },
 
   // Score bar
-  scoreBar: {
-    backgroundColor: DARK_GREEN,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  scoreBarText: { color: GOLD, fontWeight: 'bold', fontSize: 13 },
-  viraText: { color: '#fff', fontSize: 13 },
-  headerBtns: { flexDirection: 'row', gap: 6 },
-  exitBtn: { backgroundColor: '#555', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
-  forfeitBtn: { backgroundColor: '#b71c1c', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
-  exitBtnText: { color: '#fff', fontSize: 12 },
+  scoreBar:   { flexDirection: 'row', alignItems: 'center', backgroundColor: DARK_GREEN, paddingHorizontal: 10, paddingVertical: 7, gap: 6 },
+  scoreTeam:  { fontWeight: 'bold', fontSize: 13 },
+  viraText:   { color: '#ccc', fontSize: 12, flex: 1, textAlign: 'center' },
+  headerBtns: { flexDirection: 'row', gap: 5 },
+  forfeitBtn: { backgroundColor: RED, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 5 },
+  exitBtn:    { backgroundColor: '#555', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 5 },
+  btnTxt:     { color: '#fff', fontSize: 11, fontWeight: '600' },
 
-  // Toast overlay
-  toastOverlay: {
-    position: 'absolute',
-    top: 0, left: 0, right: 0, bottom: 0,
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 99,
-  },
-  toastBox: {
-    backgroundColor: 'rgba(0,0,0,0.82)',
-    paddingHorizontal: 28,
-    paddingVertical: 20,
-    borderRadius: 16,
-    alignItems: 'center',
-    minWidth: 220,
-  },
-  toastText: { color: GOLD, fontSize: 22, fontWeight: 'bold', textAlign: 'center' },
-  toastSub: { color: '#ccc', fontSize: 14, marginTop: 6, textAlign: 'center' },
+  // Table
+  table:      { flex: 1, justifyContent: 'space-evenly', alignItems: 'center', paddingVertical: 8 },
+  northSlot:  { alignItems: 'center' },
+  middleRow:  { flexDirection: 'row', alignItems: 'center', width: '100%', justifyContent: 'space-evenly' },
+  sideSlot:   { alignItems: 'center', width: 80 },
+  southSlot:  { alignItems: 'center' },
 
-  // Pernas + status bar (combined)
-  infoBar: {
-    backgroundColor: '#1a6b1f',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  pernaText: { color: '#aaa', fontSize: 12 },
-  statusText: { color: GOLD, fontSize: 13, fontWeight: '600', flexShrink: 1, textAlign: 'right' },
+  // Slot decorations
+  slotName:   { fontSize: 10, fontWeight: '600', marginVertical: 3, maxWidth: 76, textAlign: 'center' },
+  activeRing: { position: 'absolute', top: -4, left: -4, borderRadius: 10, borderWidth: 2, zIndex: 10 },
 
-  // Table area
-  tableArea: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 12,
+  // Center panel
+  centerPanel: {
+    flex: 1, marginHorizontal: 4, minHeight: IS_SMALL ? 90 : 110,
+    backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 14,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)',
+    justifyContent: 'center', alignItems: 'center', padding: 8,
   },
-  tableLabel: { color: '#aaa', fontSize: 12, marginBottom: 8 },
-  tableRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    width: '100%',
-  },
-  tableSlot: { alignItems: 'center', width: 76 },
-  tableSeatLabel: { color: '#bbb', fontSize: 10, marginBottom: 4 },
-  tableCardEmpty: {
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 8,
-    width: 72,
-    height: 96,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tableCardEmptyText: { color: '#666', fontSize: 14 },
+  cpTitle: { fontSize: IS_SMALL ? 14 : 16, fontWeight: 'bold', textAlign: 'center', color: '#fff' },
+  cpSub:   { fontSize: 11, color: '#bbb', textAlign: 'center', marginTop: 3 },
+  trucoRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 6, justifyContent: 'center' },
+  tBtn:     { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 7 },
+  tBtnTxt:  { color: '#fff', fontWeight: 'bold', fontSize: 11 },
 
-  // Truco response
-  trucoResponse: {
-    backgroundColor: '#b71c1c',
-    padding: 12,
-    marginHorizontal: 10,
-    borderRadius: 12,
-    marginBottom: 8,
-    alignItems: 'center',
-  },
-  trucoCallText: { color: '#fff', fontWeight: 'bold', fontSize: 16, marginBottom: 8 },
-  trucoButtons: { flexDirection: 'row', gap: 10 },
-  btnAccept: { backgroundColor: '#2e7d32', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8 },
-  btnRaise: { backgroundColor: '#e65100', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8 },
-  btnFold: { backgroundColor: '#555', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8 },
-  btnText: { color: '#fff', fontWeight: 'bold' },
+  // Hand
+  bottomArea: { backgroundColor: DARK_GREEN, paddingTop: 6, paddingHorizontal: 8, alignItems: 'center' },
+  handLabel:  { color: '#aaa', fontSize: 11, marginBottom: 5 },
+  handRow:    { flexDirection: 'row', gap: 8, justifyContent: 'center', marginBottom: 8 },
+  cardActive: { transform: [{ translateY: -8 }] },
+  cardInactive: { opacity: 0.72 },
 
-  // Hand + Truco button bottom area
-  bottomArea: {
-    paddingBottom: ANDROID_BOTTOM_PADDING,
-    paddingHorizontal: 8,
-    paddingTop: 4,
-    alignItems: 'center',
-    backgroundColor: DARK_GREEN,
-  },
-  handLabel: { color: '#aaa', fontSize: 11, marginBottom: 4 },
-  handRow: { flexDirection: 'row', gap: 8, justifyContent: 'center', marginBottom: 8 },
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    width: IS_SMALL_SCREEN ? 70 : 78,
-    height: IS_SMALL_SCREEN ? 90 : 100,
-    justifyContent: 'center',
-    alignItems: 'center',
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-  },
-  cardActive: { transform: [{ translateY: -8 }], opacity: 1 },
-  cardInactive: { opacity: 0.7 },
-
-  // Truco call button
-  trucoBtn: {
-    backgroundColor: RED,
-    width: '100%',
-    paddingVertical: IS_SMALL_SCREEN ? 10 : 12,
-    borderRadius: 10,
-    alignItems: 'center',
-    elevation: 4,
-  },
-  trucoBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 16, letterSpacing: 2 },
+  // Truco button
+  trucoBtn:    { width: '100%', backgroundColor: RED, paddingVertical: IS_SMALL ? 9 : 11, borderRadius: 10, alignItems: 'center', marginBottom: 4 },
+  trucoBtnTxt: { color: '#fff', fontWeight: 'bold', fontSize: 15, letterSpacing: 2 },
 });

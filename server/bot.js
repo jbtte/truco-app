@@ -1,98 +1,135 @@
 // server/bot.js
 const { getCardStrength } = require('./gameLogic');
 
-/**
- * Chooses which card the bot should play.
- *
- * @param {string[]} hand - Bot's current hand
- * @param {Array<{seatIndex, card, teamId}>} roundCards - Cards already played this round
- * @param {number} teamId - Bot's team (0 or 1)
- * @param {number[]} roundsWon - [winsTeam0, winsTeam1]
- * @returns {string} - The card to play
- */
-function chooseBotCard(hand, roundCards, teamId, roundsWon) {
-  if (hand.length === 0) return null;
+// ── 4 bot personalities ────────────────────────────────────────────────────
+const BOT_PERSONALITIES = [
+  {
+    name: 'Zé do Bot',
+    style: 'aggressive',
+    description: 'Arrojado — joga forte, pede truco cedo',
+  },
+  {
+    name: 'Bot Mané',
+    style: 'cautious',
+    description: 'Cauteloso — conserva as boas, raramente arrisca',
+  },
+  {
+    name: 'Botinho do Truco',
+    style: 'technical',
+    description: 'Técnico — joga a mínima necessária para ganhar',
+  },
+  {
+    name: 'Pequeno Bot',
+    style: 'beginner',
+    description: 'Iniciante — comete erros e joga aleatoriamente às vezes',
+  },
+];
+
+// ── chooseBotCard ──────────────────────────────────────────────────────────
+function chooseBotCard(personality, hand, roundCards, teamId, roundsWon) {
+  if (!hand || hand.length === 0) return null;
+  const { style } = personality;
 
   const enemyTeamId = teamId === 0 ? 1 : 0;
   const enemyCards = roundCards.filter(e => e.teamId === enemyTeamId);
 
-  // Find the strongest enemy card played so far this round
-  let bestEnemyCard = null;
   let bestEnemyStrength = -1;
   for (const entry of enemyCards) {
     const s = getCardStrength(entry.card);
-    if (s > bestEnemyStrength) {
-      bestEnemyStrength = s;
-      bestEnemyCard = entry.card;
-    }
+    if (s > bestEnemyStrength) bestEnemyStrength = s;
   }
 
   const sorted = [...hand].sort((a, b) => getCardStrength(a) - getCardStrength(b));
+  const winning = sorted.filter(c => getCardStrength(c) > bestEnemyStrength);
 
-  if (bestEnemyCard !== null) {
-    // Try to beat the enemy with the weakest card that wins
-    const winning = sorted.filter(c => getCardStrength(c) > bestEnemyStrength);
+  // Beginner: 25% chance of a wrong/random play
+  if (style === 'beginner' && Math.random() < 0.25) {
+    return sorted[Math.floor(Math.random() * sorted.length)];
+  }
+
+  if (bestEnemyStrength > -1) {
+    // There's an enemy card to beat
     if (winning.length > 0) {
-      return winning[0]; // weakest winning card (economize manilhas)
+      if (style === 'aggressive') return winning[winning.length - 1]; // overkill — burns strong cards
+      return winning[0]; // technical/cautious: minimum card to win
     }
     // Can't win — discard weakest
     return sorted[0];
   }
 
-  // Bot plays first in this round
-  if (roundsWon[teamId] === 1) {
-    // Already won a round — play strong to close the hand
-    return sorted[sorted.length - 1];
+  // Playing first in this round
+  if (style === 'aggressive') {
+    return sorted[sorted.length - 1]; // always play strongest
   }
-
-  // Play middle card (avoid burning manilha early)
-  // If only manilhas, play weakest
-  const nonManilhas = sorted.filter(c => getCardStrength(c) < 11);
-  if (nonManilhas.length > 0) {
-    const mid = Math.floor(nonManilhas.length / 2);
-    return nonManilhas[mid];
+  if (style === 'cautious') {
+    // If already won a round, play strong to close; otherwise play weak
+    return roundsWon[teamId] >= 1 ? sorted[sorted.length - 1] : sorted[0];
   }
-  return sorted[0]; // all manilhas — play weakest
+  if (style === 'technical') {
+    // Play middle non-manilha; save manilhas for later
+    const nonManilhas = sorted.filter(c => getCardStrength(c) < 11);
+    if (nonManilhas.length > 0) {
+      const mid = Math.floor(nonManilhas.length / 2);
+      return nonManilhas[mid];
+    }
+    return sorted[0]; // only manilhas left — play weakest
+  }
+  // beginner: random
+  return sorted[Math.floor(Math.random() * sorted.length)];
 }
 
-/**
- * Decides if bot should call truco.
- *
- * @param {string[]} hand
- * @param {number[]} scores - [scoreTeam0, scoreTeam1]
- * @param {number} teamId
- * @returns {boolean}
- */
-function shouldCallTruco(hand, scores, teamId) {
+// ── shouldCallTruco ────────────────────────────────────────────────────────
+function shouldCallTruco(personality, hand, scores, teamId) {
+  const { style } = personality;
   const totalStrength = hand.reduce((sum, c) => sum + getCardStrength(c), 0);
-  const manilhas = hand.filter(c => getCardStrength(c) >= 11);
-
-  // Don't call if enemy is at 11+ (risky)
+  const manilhas = hand.filter(c => getCardStrength(c) >= 11).length;
   const enemyScore = scores[teamId === 0 ? 1 : 0];
-  if (enemyScore >= 9) return false;
 
-  return manilhas.length >= 1 || totalStrength >= 22;
-}
-
-/**
- * Decides bot's response to a truco call.
- *
- * @param {string[]} hand
- * @param {number} currentValue - current truco stake (3, 6, 9, 12)
- * @returns {'accept'|'raise'|'fold'}
- */
-function botRespondTruco(hand, currentValue) {
-  const totalStrength = hand.reduce((sum, c) => sum + getCardStrength(c), 0);
-  const manilhas = hand.filter(c => getCardStrength(c) >= 11);
-
-  if (currentValue >= 12) {
-    // Can't raise further — accept or fold
-    return totalStrength >= 18 || manilhas.length >= 1 ? 'accept' : 'fold';
+  if (style === 'aggressive') {
+    if (enemyScore >= 11) return false;
+    return manilhas >= 1 || totalStrength >= 18;
   }
-
-  if (manilhas.length >= 2 || totalStrength >= 26) return 'raise';
-  if (manilhas.length >= 1 || totalStrength >= 20) return 'accept';
-  return 'fold';
+  if (style === 'cautious') {
+    if (enemyScore >= 9) return false;
+    return manilhas >= 2 || totalStrength >= 28;
+  }
+  if (style === 'technical') {
+    if (enemyScore >= 9) return false;
+    return manilhas >= 1 && totalStrength >= 22;
+  }
+  // beginner: random, only if hand is decent
+  if (totalStrength >= 20) return Math.random() < 0.3;
+  return false;
 }
 
-module.exports = { chooseBotCard, shouldCallTruco, botRespondTruco };
+// ── botRespondTruco ────────────────────────────────────────────────────────
+function botRespondTruco(personality, hand, currentValue) {
+  const { style } = personality;
+  const totalStrength = hand.reduce((sum, c) => sum + getCardStrength(c), 0);
+  const manilhas = hand.filter(c => getCardStrength(c) >= 11).length;
+
+  if (style === 'aggressive') {
+    if (currentValue >= 12) return totalStrength >= 16 ? 'accept' : 'fold';
+    if (manilhas >= 1 || totalStrength >= 18) return 'raise';
+    if (totalStrength >= 14) return 'accept';
+    return 'fold';
+  }
+  if (style === 'cautious') {
+    if (currentValue >= 9) return manilhas >= 2 ? 'accept' : 'fold';
+    if (manilhas >= 2) return 'accept';
+    return 'fold';
+  }
+  if (style === 'technical') {
+    if (currentValue >= 12) return totalStrength >= 18 || manilhas >= 1 ? 'accept' : 'fold';
+    if (manilhas >= 2 || totalStrength >= 26) return 'raise';
+    if (manilhas >= 1 || totalStrength >= 20) return 'accept';
+    return 'fold';
+  }
+  // beginner: random
+  const r = Math.random();
+  if (r < 0.3) return 'fold';
+  if (r < 0.5 && currentValue < 12) return 'raise';
+  return 'accept';
+}
+
+module.exports = { BOT_PERSONALITIES, chooseBotCard, shouldCallTruco, botRespondTruco };
