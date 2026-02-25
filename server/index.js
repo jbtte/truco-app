@@ -73,8 +73,6 @@ function seatNames() {
 
 // ── Game Flow ──────────────────────────────────────────────────────────────
 function startGame() {
-  assignBots();
-
   const hands = dealHands();
   gameState.vira       = hands.vira;
   gameState.seats[0].hand = hands.human1;
@@ -393,7 +391,7 @@ io.on('connection', (socket) => {
     message:  `Você é o Jogador ${availableSeat.seatIndex + 1}. Aguardando adversário...`,
   });
 
-  if (getHumanSeats().length === 2) startGame();
+  if (getHumanSeats().length === 2) { assignBots(); startGame(); }
 
   socket.on('play_card', ({ card }) => {
     if (gameState.phase !== 'PLAYING') return;
@@ -420,6 +418,22 @@ io.on('connection', (socket) => {
     const respSeat = gameState.trucoState.respondingSeat;
     if (seat.seatIndex !== respSeat && seat.teamId !== gameState.seats[respSeat]?.teamId) return;
     handleTrucoResponse(seat.seatIndex, action);
+  });
+
+  socket.on('play_again', () => {
+    if (gameState.phase !== 'GAME_OVER') return;
+    const seat = getSeatBySockId(socket.id);
+    if (!seat) return;
+    // Reset scores and round state; keep seat assignments and socket connections
+    gameState.scores       = [0, 0];
+    gameState.handStartSeat = 0;
+    for (const s of gameState.seats) { s.hand = []; s.playedCard = null; }
+    gameState.roundCards   = [];
+    gameState.roundResults = [];
+    gameState.roundsWon    = [0, 0];
+    gameState.trucoState   = { active: false, calledByTeam: null, value: 1, waitingResponse: false, respondingSeat: null };
+    assignBots();
+    startGame();
   });
 
   socket.on('forfeit', () => {

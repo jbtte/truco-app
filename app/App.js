@@ -100,7 +100,7 @@ function PlayerSlot({ seatIndex, tableCard, name, isActive, pulseAnim, cardW, ca
 }
 
 // ── CenterPanel ────────────────────────────────────────────────────────────
-function CenterPanel({ content, onRespond, trucoValue }) {
+function CenterPanel({ content, onRespond, trucoValue, onPlayAgain }) {
   const { type, title, subtitle, team } = content;
   const tc = team != null ? TEAM[team] : null;
 
@@ -127,6 +127,18 @@ function CenterPanel({ content, onRespond, trucoValue }) {
             <Text style={S.tBtnTxt}>Correr</Text>
           </TouchableOpacity>
         </View>
+      </View>
+    );
+  }
+
+  if (type === 'game_over') {
+    return (
+      <View style={panelStyle}>
+        <Text style={[S.cpTitle, { color: titleColor }]}>{title}</Text>
+        {subtitle ? <Text style={S.cpSub}>{subtitle}</Text> : null}
+        <TouchableOpacity style={[S.tBtn, { backgroundColor: '#2e7d32', marginTop: 10, paddingHorizontal: 16 }]} onPress={onPlayAgain}>
+          <Text style={S.tBtnTxt}>Jogar de Novo</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -351,6 +363,10 @@ export default function App() {
     socket?.disconnect();
   }, [socket]);
 
+  const onPlayAgain = useCallback(() => {
+    socket?.emit('play_again');
+  }, [socket]);
+
   // ── Derived card sizes ───────────────────────────────────────────────────
   const sideW  = IS_SMALL ? 48 : 54;
   const sideH  = IS_SMALL ? 63 : 71;
@@ -426,6 +442,7 @@ export default function App() {
             content={centerContent}
             onRespond={onRespondTruco}
             trucoValue={trucoValue}
+            onPlayAgain={onPlayAgain}
           />
 
           {/* East */}
