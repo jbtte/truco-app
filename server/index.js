@@ -36,6 +36,7 @@ function createInitialState() {
       active: false, calledByTeam: null, value: 1, waitingResponse: false, respondingSeat: null,
     },
     phase: 'WAITING',
+    handStartSeat: 0,
   };
 }
 
@@ -80,7 +81,8 @@ function startGame() {
   gameState.seats[1].hand = hands.human2;
   gameState.seats[2].hand = hands.bot1;
   gameState.seats[3].hand = hands.bot2;
-  gameState.currentSeat   = 0;
+  for (const seat of gameState.seats) seat.playedCard = null;
+  gameState.currentSeat   = gameState.handStartSeat;
   gameState.roundCards    = [];
   gameState.roundResults  = [];
   gameState.roundsWon     = [0, 0];
@@ -259,6 +261,7 @@ function resolveHand(handResult) {
     gameState.roundResults = [];
     gameState.roundsWon   = [0, 0];
     gameState.trucoState  = { active: false, calledByTeam: null, value: 1, waitingResponse: false, respondingSeat: null };
+    gameState.handStartSeat = (gameState.handStartSeat + 1) % 4;
     startGame();
   }, HAND_DELAY);
 }
@@ -276,7 +279,8 @@ function handleTrucoCall(callerSeat) {
   const currentValue = gameState.trucoState.value;
   const newValue = currentValue === 1 ? 3 : getNextTrucoValue(currentValue);
   if (newValue === null) return;
-  if (gameState.trucoState.waitingResponse && gameState.trucoState.calledByTeam === seat.teamId) return;
+  // Same team can't escalate — only the opposing team may call the next raise
+  if (gameState.trucoState.value > 1 && gameState.trucoState.calledByTeam === seat.teamId) return;
 
   gameState.phase = 'TRUCO_PENDING';
   gameState.trucoState.active         = true;
@@ -329,7 +333,15 @@ function handleTrucoResponse(responderSeat, action) {
       setTimeout(() => emitToHumans('game_over', { winnerTeam: gameWinner, scores: gameState.scores }), HAND_DELAY);
       return;
     }
-    setTimeout(() => startGame(), HAND_DELAY);
+    setTimeout(() => {
+      for (const seat of gameState.seats) { seat.hand = []; seat.playedCard = null; }
+      gameState.roundCards   = [];
+      gameState.roundResults = [];
+      gameState.roundsWon    = [0, 0];
+      gameState.trucoState   = { active: false, calledByTeam: null, value: 1, waitingResponse: false, respondingSeat: null };
+      gameState.handStartSeat = (gameState.handStartSeat + 1) % 4;
+      startGame();
+    }, HAND_DELAY);
     return;
   }
 
