@@ -4,10 +4,14 @@ import {
   Text,
   View,
   TouchableOpacity,
-  Alert,
   SafeAreaView,
   StatusBar,
+  Platform,
+  Dimensions,
 } from 'react-native';
+
+const SCREEN_HEIGHT = Dimensions.get('window').height;
+const IS_SMALL_SCREEN = SCREEN_HEIGHT < 700;
 import io from 'socket.io-client';
 
 const SOCKET_URL =
@@ -46,6 +50,12 @@ export default function App() {
   });
 
   const [vencedor, setVencedor] = useState(null);
+  const [toast, setToast] = useState(null); // { message, sub }
+
+  const showToast = useCallback((message, sub = '', duration = 2500) => {
+    setToast({ message, sub });
+    setTimeout(() => setToast(null), duration);
+  }, []);
 
   // ── Socket setup ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -101,9 +111,19 @@ export default function App() {
       setTableCards(prev => ({ ...prev, [seatIndex]: card }));
     });
 
-    newSocket.on('round_end', ({ roundsWon: rw, scores: sc }) => {
+    newSocket.on('round_end', ({ roundsWon: rw, scores: sc, result }) => {
       setRoundsWon(rw);
       setScores(sc);
+      if (result?.isDraw) {
+        showToast('Perna empatada!', 'Ninguém pontuou');
+      } else if (result?.winnerTeam !== undefined) {
+        // will compare with myTeam via state ref workaround below
+        setMyTeam(prev => {
+          const msg = result.winnerTeam === prev ? 'Você ganhou a perna!' : 'Inimigo ganhou a perna!';
+          showToast(msg, `Pernas: T0 ${rw[0]} × T1 ${rw[1]}`);
+          return prev;
+        });
+      }
     });
 
     newSocket.on('next_round', ({ currentSeat: cs }) => {
@@ -116,17 +136,24 @@ export default function App() {
       });
     });
 
-    newSocket.on('hand_end', ({ winnerTeam, isDraw, points, scores: sc }) => {
+    newSocket.on('hand_end', ({ winnerTeam, isDraw, points, scores: sc, foldedByTeam }) => {
       setScores(sc);
       setPhase('HAND_END');
       if (isDraw) {
-        setStatus('Empate! Mão dividida.');
+        showToast('Mão empatada!', 'Cada time recebe 0.5pt', 3000);
+        setStatus('Empate!');
       } else {
         setMyTeam(prev => {
-          const msg = winnerTeam === prev
-            ? `Seu time ganhou +${points}pt!`
-            : `Time inimigo ganhou +${points}pt.`;
-          setStatus(msg);
+          const venceu = winnerTeam === prev;
+          const razao = foldedByTeam !== undefined
+            ? (foldedByTeam === prev ? 'Você correu!' : 'Inimigo correu!')
+            : '';
+          showToast(
+            venceu ? `Sua equipe ganhou a mão! +${points}pt` : `Inimigo ganhou a mão! +${points}pt`,
+            razao || `Placar: ${sc[0]} × ${sc[1]}`,
+            3000,
+          );
+          setStatus(venceu ? `+${points}pt para o seu time!` : `+${points}pt para o inimigo.`);
           return prev;
         });
       }
@@ -197,6 +224,11 @@ export default function App() {
     socket?.emit('call_truco');
   }, [phase, socket]);
 
+  const onForfeit = useCallback(() => {
+    socket?.emit('forfeit');
+    socket?.disconnect();
+  }, [socket]);
+
   const onRespondTruco = useCallback((action) => {
     socket?.emit('respond_truco', { action });
   }, [socket]);
@@ -225,14 +257,37 @@ export default function App() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" />
+      {/* Toast overlay */}
+      {toast && (
+        <View style={styles.toastOverlay} pointerEvents="none">
+          <View style={styles.toastBox}>
+            <Text style={styles.toastText}>{toast.message}</Text>
+            {toast.sub ? <Text style={styles.toastSub}>{toast.sub}</Text> : null}
+          </View>
+        </View>
+      )}
+      <StatusBar
+        barStyle="light-content"
+        backgroundColor={DARK_GREEN}
+        translucent={false}
+      />
 
       {/* Score bar */}
       <View style={styles.scoreBar}>
         <Text style={styles.scoreBarText}>
-          Time 0: {scores[0]}  |  Time 1: {scores[1]}
+          T0: {scores[0]}  |  T1: {scores[1]}
         </Text>
         <Text style={styles.viraText}>Vira: {formatCard(vira)}</Text>
+        <View style={styles.headerBtns}>
+          {phase === 'PLAYING' || phase === 'TRUCO_PENDING' ? (
+            <TouchableOpacity onPress={onForfeit} style={styles.forfeitBtn}>
+              <Text style={styles.exitBtnText}>Desistir</Text>
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity onPress={() => socket?.disconnect()} style={styles.exitBtn}>
+            <Text style={styles.exitBtnText}>Sair</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Pernas indicator */}
@@ -288,8 +343,8 @@ export default function App() {
         </View>
       )}
 
-      {/* Player hand */}
-      <View style={styles.handArea}>
+      {/* Player hand + Truco button — wrapped with Android bottom padding */}
+      <View style={styles.bottomArea}>
         <Text style={styles.handLabel}>Sua mão</Text>
         <View style={styles.handRow}>
           {hand.map((card, idx) => (
@@ -308,16 +363,15 @@ export default function App() {
             </TouchableOpacity>
           ))}
         </View>
-      </View>
 
-      {/* Truco call button */}
-      {canCallTruco && (
-        <TouchableOpacity style={styles.trucoBtn} onPress={onCallTruco}>
-          <Text style={styles.trucoBtnText}>
-            {trucoState.value === 1 ? 'TRUCO!' : trucoState.value === 3 ? 'SEIS!' : trucoState.value === 6 ? 'NOVE!' : 'DOZE!'}
-          </Text>
-        </TouchableOpacity>
-      )}
+        {canCallTruco && (
+          <TouchableOpacity style={styles.trucoBtn} onPress={onCallTruco}>
+            <Text style={styles.trucoBtnText}>
+              {trucoState.value === 1 ? 'TRUCO!' : trucoState.value === 3 ? 'SEIS!' : trucoState.value === 6 ? 'NOVE!' : 'DOZE!'}
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
     </SafeAreaView>
   );
 }
@@ -327,6 +381,8 @@ const DARK_GREEN = '#145214';
 const LIGHT_GREEN = '#2e7d32';
 const GOLD = '#ffd600';
 const RED = '#d32f2f';
+
+const ANDROID_BOTTOM_PADDING = Platform.OS === 'android' ? 52 : 0;
 
 const styles = StyleSheet.create({
   container: {
@@ -350,13 +406,37 @@ const styles = StyleSheet.create({
   // Score bar
   scoreBar: {
     backgroundColor: DARK_GREEN,
-    padding: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  scoreBarText: { color: GOLD, fontWeight: 'bold', fontSize: 15 },
-  viraText: { color: '#fff', fontSize: 14 },
+  scoreBarText: { color: GOLD, fontWeight: 'bold', fontSize: 13 },
+  viraText: { color: '#fff', fontSize: 13 },
+  headerBtns: { flexDirection: 'row', gap: 6 },
+  exitBtn: { backgroundColor: '#555', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
+  forfeitBtn: { backgroundColor: '#b71c1c', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
+  exitBtnText: { color: '#fff', fontSize: 12 },
+
+  // Toast overlay
+  toastOverlay: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 99,
+  },
+  toastBox: {
+    backgroundColor: 'rgba(0,0,0,0.82)',
+    paddingHorizontal: 28,
+    paddingVertical: 20,
+    borderRadius: 16,
+    alignItems: 'center',
+    minWidth: 220,
+  },
+  toastText: { color: GOLD, fontSize: 22, fontWeight: 'bold', textAlign: 'center' },
+  toastSub: { color: '#ccc', fontSize: 14, marginTop: 6, textAlign: 'center' },
 
   // Perna bar
   pernaBar: {
@@ -424,19 +504,21 @@ const styles = StyleSheet.create({
   btnFold: { backgroundColor: '#555', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8 },
   btnText: { color: '#fff', fontWeight: 'bold' },
 
-  // Hand
-  handArea: {
-    paddingBottom: 16,
+  // Hand + Truco button bottom area
+  bottomArea: {
+    paddingBottom: ANDROID_BOTTOM_PADDING,
     paddingHorizontal: 8,
+    paddingTop: 4,
     alignItems: 'center',
+    backgroundColor: DARK_GREEN,
   },
-  handLabel: { color: '#aaa', fontSize: 12, marginBottom: 6 },
-  handRow: { flexDirection: 'row', gap: 10, justifyContent: 'center' },
+  handLabel: { color: '#aaa', fontSize: 11, marginBottom: 4 },
+  handRow: { flexDirection: 'row', gap: 8, justifyContent: 'center', marginBottom: 8 },
   card: {
     backgroundColor: '#fff',
-    borderRadius: 10,
-    width: 80,
-    height: 110,
+    borderRadius: 8,
+    width: IS_SMALL_SCREEN ? 70 : 78,
+    height: IS_SMALL_SCREEN ? 90 : 100,
     justifyContent: 'center',
     alignItems: 'center',
     elevation: 4,
@@ -445,21 +527,20 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },
   },
-  cardActive: { borderWidth: 2, borderColor: GOLD, transform: [{ translateY: -8 }] },
+  cardActive: { borderWidth: 2, borderColor: GOLD, transform: [{ translateY: -6 }] },
   cardInactive: { opacity: 0.75 },
   cardManilha: { borderWidth: 2, borderColor: GOLD },
-  cardText: { fontSize: 13, fontWeight: 'bold', color: '#222', textAlign: 'center' },
-  manilhaBadge: { fontSize: 12, color: GOLD, marginTop: 2 },
+  cardText: { fontSize: 12, fontWeight: 'bold', color: '#222', textAlign: 'center' },
+  manilhaBadge: { fontSize: 11, color: GOLD, marginTop: 2 },
 
   // Truco call button
   trucoBtn: {
     backgroundColor: RED,
-    margin: 10,
-    marginTop: 0,
-    paddingVertical: 14,
-    borderRadius: 12,
+    width: '100%',
+    paddingVertical: IS_SMALL_SCREEN ? 10 : 12,
+    borderRadius: 10,
     alignItems: 'center',
     elevation: 4,
   },
-  trucoBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 18, letterSpacing: 2 },
+  trucoBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 16, letterSpacing: 2 },
 });

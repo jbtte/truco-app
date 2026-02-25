@@ -461,6 +461,23 @@ io.on('connection', (socket) => {
     handleTrucoResponse(seat.seatIndex, action);
   });
 
+  // ── forfeit ────────────────────────────────────────────────────────────
+  socket.on('forfeit', () => {
+    const seat = getSeatBySockId(socket.id);
+    if (!seat) return;
+    const winnerTeam = seat.teamId === 0 ? 1 : 0;
+    gameState.scores[winnerTeam] += gameState.trucoState.value;
+    emitToHumans('hand_end', {
+      winnerTeam,
+      isDraw: false,
+      points: gameState.trucoState.value,
+      scores: gameState.scores,
+      foldedByTeam: seat.teamId,
+    });
+    emitToHumans('opponent_disconnected', { message: 'Adversário desistiu.' });
+    gameState = createInitialState();
+  });
+
   // ── ping (keep-alive for Render free tier) ─────────────────────────────
   socket.on('ping', () => socket.emit('pong'));
 
