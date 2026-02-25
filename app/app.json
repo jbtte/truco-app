@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "Truco Paulista",
+    "slug": "truco-paulista",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1b5e20"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.truco.paulista"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1b5e20"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.truco.paulista"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "your-eas-project-id"
+      }
+    }
+  }
+}
